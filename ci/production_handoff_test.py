@@ -70,12 +70,14 @@ class HandoffTest(unittest.TestCase):
         path = self.output / 'runtime.json'
         receipt = {'schema': 1, 'architecture': 'amd64', 'sdk_inventory': sdk_inventory(self.sdk),
                    'library_path': [str(library.parent)], 'libraries': {str(library): digest(library)},
-                   'common_ldd': {'libfixture.so': digest(library)}}
+                   'common_ldd': {'libfixture.so': digest(library)},
+                   **{key: {'path': str(library), 'sha256': digest(library)}
+                      for key in ('loader', 'common_runner', 'patchelf', 'runtime_archive')}}
         path.write_text(json.dumps(receipt))
         with patch('production_handoff.subprocess.check_output',
                    return_value='libfixture.so => ' + str(library) + ' (0x123)\n'):
             environment, _ = runtime_environment(path, self.sdk)
-            self.assertEqual(environment['LD_LIBRARY_PATH'], str(library.parent))
+            self.assertEqual(environment, {'SONIC_P4RT_TEST_RUNTIME': str(path)})
             receipt['common_ldd']['libfixture.so'] = '0' * 64
             path.write_text(json.dumps(receipt))
             with self.assertRaisesRegex(ValueError, 'runtime resolution differs'):

@@ -99,6 +99,17 @@ end
     return records[0]
 
 
+def installed_command(binary, arguments, common, *, listing=False):
+    loader = os.environ.get('P4RT_TEST_RUNTIME_LOADER')
+    libraries = os.environ.get('P4RT_TEST_LIBRARY_PATH')
+    require(bool(loader) == bool(libraries), 'Incomplete declared test runtime')
+    if loader:
+        require(Path(loader).is_absolute() and Path(loader).is_file(), 'Missing declared runtime interpreter')
+        search = os.pathsep.join((str(common.parent), libraries))
+        return [loader, '--library-path', search, *(['--list'] if listing else []), str(binary), *arguments]
+    return (['ldd', str(binary)] if listing else [str(binary), *arguments])
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--runtime", required=True, type=Path)
@@ -129,8 +140,13 @@ def main():
         runtime.mkdir(); debug.mkdir()
         unpack(args.runtime, runtime, "", 0o755)
         unpack(args.debug, debug, ".dwp", 0o644)
-        environment = dict(os.environ, LC_ALL="C", LD_LIBRARY_PATH=os.pathsep.join(filter(None,
-                           (str(common.parent), os.environ.get("LD_LIBRARY_PATH", "")))))
+        environment = {key: value for key, value in os.environ.items() if key not in ('LD_PRELOAD', 'LD_AUDIT')}
+        environment['LC_ALL'] = 'C'
+        if os.environ.get('P4RT_TEST_RUNTIME_LOADER'):
+            environment.pop('LD_LIBRARY_PATH', None)
+        else:
+            environment['LD_LIBRARY_PATH'] = os.pathsep.join(filter(None,
+                (str(common.parent), os.environ.get('LD_LIBRARY_PATH', ''))))
         for name, (source, flag) in PROGRAMS.items():
             binary, symbols = runtime / name, debug / (name + ".dwp")
             header = run(["readelf", "-h", str(binary)])
@@ -140,14 +156,14 @@ def main():
                 require(section in sections, name + " has incomplete DWP: " + section)
             dynamic = run(["readelf", "-d", str(binary)])
             needed = re.findall(r"\(NEEDED\).*?\[([^]]+)\]", dynamic)
-            loaded = run(["ldd", str(binary)], env=environment)
+            loaded = run(installed_command(binary, [], common, listing=True), env=environment)
             require("not found" not in loaded, "unresolved installed dependency: " + name)
             if name == "p4rt":
                 require("libswsscommon.so.0" in needed, "P4RT no longer imports the Common library")
                 match = re.search(r"libswsscommon\.so\.0 => (\S+)", loaded)
                 require(match and digest(match[1]) == digest(common), "loaded Common differs from SDK")
-                run([str(binary), "--only_check_args"], env=environment)
-            help_result = subprocess.run([str(binary), "--helpshort"], env=environment,
+                run(installed_command(binary, ["--only_check_args"], common), env=environment)
+            help_result = subprocess.run(installed_command(binary, ["--helpshort"], common), env=environment,
                                          text=True, capture_output=True, timeout=30)
             require(help_result.returncode in (0, 1) and flag in help_result.stdout + help_result.stderr,
                     "installed production CLI did not expose its original flags: " + name)

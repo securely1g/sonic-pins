@@ -77,21 +77,32 @@ def runtime_environment(path, sdk):
         library = Path(name)
         require(library.is_absolute() and library.is_file() and digest(library) == checksum,
                 'Prepared runtime library changed: ' + name)
-    environment = {'LD_LIBRARY_PATH': ':'.join(directories)}
-    # Do not let an ambient audit/preload library mask the recorded runtime.
+    for key in ('loader', 'common_runner', 'patchelf', 'runtime_archive'):
+        item = receipt.get(key, {})
+        require(isinstance(item.get('path'), str) and Path(item['path']).is_absolute() and
+                Path(item['path']).is_file() and digest(item['path']) == item.get('sha256'),
+                'Declared runtime input changed: ' + key)
+    require(receipt['loader']['path'] in libraries and
+            receipt['loader']['sha256'] == libraries[receipt['loader']['path']],
+            'Runtime interpreter is not a declared selected library')
     import os
     process_env = {key: value for key, value in os.environ.items()
                    if key not in ('LD_LIBRARY_PATH', 'LD_PRELOAD', 'LD_AUDIT')}
-    process_env.update(environment, LC_ALL='C')
-    loaded = subprocess.check_output(['ldd', str(sdk / 'lib/libswsscommon.so.0')],
+    process_env['LC_ALL'] = 'C'
+    loaded = subprocess.check_output([receipt['loader']['path'], '--library-path', ':'.join(directories),
+                                     '--list', str(sdk / 'lib/libswsscommon.so.0')],
                                      env=process_env, text=True, timeout=30)
     require('not found' not in loaded, 'Common SDK has an unresolved runtime dependency')
     resolved = {match.group(1): digest(match.group(2)) for match in
                 re.finditer(r'^\s*(\S+) => (/\S+) \(', loaded, re.MULTILINE)}
     require(resolved and resolved == receipt.get('common_ldd'),
             'Common SDK runtime resolution differs from preparation')
-    return environment, {'receipt_sha256': digest(path), 'common_ldd': resolved,
-                         'library_path': directories, 'libraries': libraries}
+    # Only test children consume the receipt. The Bazel/JVM/compiler and native
+    # Python/GDB environment must never inherit the staged libc search path.
+    return {'SONIC_P4RT_TEST_RUNTIME': str(path)}, {
+        'receipt_sha256': digest(path), 'common_ldd': resolved,
+        'library_path': directories, 'libraries': libraries,
+        **{key: receipt[key] for key in ('loader', 'common_runner', 'patchelf', 'runtime_archive')}}
 
 
 def verify_installed(report, built, sdk):

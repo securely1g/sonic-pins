@@ -80,8 +80,14 @@ python3 ci/production_runtime.py --phase=test --bazel=/path/to/bazelisk \
 
 The separate test phase requires the exact clean source, SDK headers/library,
 TARs and sealed contracts recorded by the build phase. It also verifies the
-prepared runtime's library hashes and actual Common `ldd` resolution before and
-after running the original tests without cached test results. The image's
+prepared runtime's library hashes and actual Common resolution through the
+declared ELF interpreter before and after running tests without cached results.
+The 57 ELF tests reuse Common's exact runtime runner and private ELF copies.
+The original golden shell test keeps its filters and comparison, and delegates
+only its ELF child to that runner. The installed-package Python test keeps
+native Python/GDB and invokes its P4RT CLIs through the same selected loader.
+The production TARs remain unchanged.
+The image's
 preparation step supplies this runtime from its selected Common graph; the owner
 driver does not install system libraries. A native host caller must provide the
 matching prepared runtime rather than rely on ambient Common dependencies.

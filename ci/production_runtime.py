@@ -7,6 +7,8 @@ import json
 import os
 from pathlib import Path
 import shutil
+import shlex
+import sys
 import subprocess
 import xml.etree.ElementTree as ET
 
@@ -57,6 +59,10 @@ def main():
         for key in ("LD_PRELOAD", "LD_AUDIT", "LD_LIBRARY_PATH"):
             env.pop(key, None)
         options.extend("--test_env=" + key + "=" + value for key, value in runtime_env.items())
+        options.append('--run_under=' + shlex.join([
+            sys.executable, '-B', str(source / 'ci/runtime_run_under.py'), '--sdk', str(sdk),
+            '--receipt', str(args.runtime_receipt.resolve()),
+            '--receipt-sha256', runtime_proof['receipt_sha256'], '--']))
     packages = ["//p4rt_app:" + name for name in PROFILES]
     templates = [target + "_contract_template" for target in packages]
     private = args.output_base.resolve().parent / "p4rt-runtime-private"
