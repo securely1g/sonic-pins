@@ -9,6 +9,8 @@ on:
 jobs:
   build:
     name: Bazel Build and Test
+    # This source/TAR migration runs its audited P4RT suite in production-runtime.yml.
+    if: github.head_ref != 'codex/p4rt-runtime-tars'
 
     runs-on: ubuntu-22.04
     env:
