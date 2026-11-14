@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: securely1g/sonic-buildimage
-          ref: f5454f549f6f3329c2f60f34ecf69db8861657e2
+          ref: 166e8ff9489b37d477dd386a642f7479c8090c19
           path: .ci-deps/buildimage
           persist-credentials: false
 
