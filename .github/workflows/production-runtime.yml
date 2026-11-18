@@ -44,7 +44,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           repository: securely1g/sonic-buildimage
-          ref: 166e8ff9489b37d477dd386a642f7479c8090c19
+          ref: 6d99dee019c676acd940b3d14b9a795fe5393696
           path: .ci-deps/buildimage
           persist-credentials: false
 
@@ -53,7 +53,7 @@ jobs:
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config --global --add safe.directory "$GITHUB_WORKSPACE/.ci-deps/buildimage"
           git -C .ci-deps/buildimage submodule update --init --depth=1 src/sonic-swss-common
-          test "$(git -C .ci-deps/buildimage/src/sonic-swss-common rev-parse HEAD)" = c3af650658b75418186089ef3d5f88e50af63476
+          test "$(git -C .ci-deps/buildimage/src/sonic-swss-common rev-parse HEAD)" = 334389eae54afd1f4f5ee69f89c3a7ad2062ee61
           test "$(dpkg --print-architecture)" = amd64
           test "$(cat .bazelversion)" = 6.4.0
           mkdir -p artifacts/p4rt
@@ -69,15 +69,22 @@ jobs:
           disk-cache: p4rt-production-amd64
           cache-version: "8.5.1-6.4.0"
 
+      - name: Configure shared source download mirrors
+        run: |
+          python3 -B .ci-deps/buildimage/tools/bazel/ci/source_mirrors.py \
+            --output "$RUNNER_TEMP/sonic-source-mirrors.cfg"
+
       - name: Audit Common's configured SDK and runtime graph
         working-directory: .ci-deps/buildimage/src/sonic-swss-common
         env:
           USE_BAZEL_VERSION: 8.5.1
         run: |
           bazel --output_base="$RUNNER_TEMP/common-bazel-8" aquery \
+            --downloader_config="$RUNNER_TEMP/sonic-source-mirrors.cfg" \
+            --host_platform=@sonic_build_infra//platforms:x86_64_trixie \
             --jobs=2 --//tools/bazel:yang_modules=True --output=jsonproto \
             --include_artifacts --include_commandline=false \
-            'deps(set(//dist:libswsscommon_sdk @libyang//:libyang_pkg))' \
+            'deps(set(//dist:libswsscommon_sdk @libyang//:libyang_pkg @libnl3//:libnl-3_pkg @libnl3//:libnl-route-3_pkg @libnl3//:libnl-nf-3_pkg))' \
             > "$RUNNER_TEMP/common-actions.json"
           python3 - "$RUNNER_TEMP/common-actions.json" "$GITHUB_WORKSPACE/artifacts/p4rt/common-action-audit.json" <<'PY'
           import json, sys
@@ -99,7 +106,8 @@ jobs:
             --common-source .ci-deps/buildimage/src/sonic-swss-common \
             --output-dir "$RUNNER_TEMP/common-sdk" \
             --output-base "$RUNNER_TEMP/common-bazel-8" \
-            --arch amd64 --bazel-arg=--jobs=2
+            --arch amd64 --bazel-arg=--jobs=2 \
+            --bazel-arg=--downloader_config="$RUNNER_TEMP/sonic-source-mirrors.cfg"
 
       - name: Prepare Common's native runtime dependencies
         working-directory: .ci-deps/buildimage/src/sonic-swss-common
@@ -109,12 +117,24 @@ jobs:
           python3 -B tools/bazel/runtime/prepare.py \
             --image-reference debian:trixie-20260918 \
             --output "$GITHUB_WORKSPACE/artifacts/p4rt/test-runtime.json"
+          native_args=(
+            --downloader_config="$RUNNER_TEMP/sonic-source-mirrors.cfg"
+            --host_platform=@sonic_build_infra//platforms:x86_64_trixie
+          )
+          runtime_targets=(
+            @libyang//:libyang_pkg
+            @libnl3//:libnl-3_pkg
+            @libnl3//:libnl-route-3_pkg
+            @libnl3//:libnl-nf-3_pkg
+          )
           bazel --output_base="$RUNNER_TEMP/common-bazel-8" build \
-            --jobs=2 --//tools/bazel:yang_modules=True @libyang//:libyang_pkg
-          libyang_archive="$(bazel --output_base="$RUNNER_TEMP/common-bazel-8" cquery \
-            --//tools/bazel:yang_modules=True --output=files @libyang//:libyang_pkg)"
-          test -f "$libyang_archive"
-          tar -xf "$libyang_archive" -C /
+            "${native_args[@]}" --jobs=2 --//tools/bazel:yang_modules=True "${runtime_targets[@]}"
+          for target in "${runtime_targets[@]}"; do
+            archive="$(bazel --output_base="$RUNNER_TEMP/common-bazel-8" cquery \
+              "${native_args[@]}" --//tools/bazel:yang_modules=True --output=files "$target")"
+            test -f "$archive"
+            tar -xf "$archive" -C /
+          done
           ldconfig
           bazel --output_base="$RUNNER_TEMP/common-bazel-8" shutdown
 
