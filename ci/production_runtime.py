@@ -10,10 +10,22 @@ import shutil
 import shlex
 import sys
 import subprocess
+import tempfile
 import xml.etree.ElementTree as ET
 
 from runtime_contract import PROFILES, seal_contracts
 from production_handoff import sdk_inventory, verify_build, runtime_environment, verify_installed, verify_runtime_unchanged
+
+
+def private_directory(output_base):
+    """Create audit scratch space owned by one invocation, beside its output base.
+
+    Graph and test-event files must not be shared by invocations whose output
+    bases have the same parent, or one run could truncate or read another's.
+    """
+    parent = Path(output_base).resolve().parent
+    parent.mkdir(parents=True, exist_ok=True)
+    return Path(tempfile.mkdtemp(prefix="p4rt-runtime-private-", dir=parent))
 
 
 def main():
@@ -65,8 +77,7 @@ def main():
             '--receipt-sha256', runtime_proof['receipt_sha256'], '--']))
     packages = ["//p4rt_app:" + name for name in PROFILES]
     templates = [target + "_contract_template" for target in packages]
-    private = args.output_base.resolve().parent / "p4rt-runtime-private"
-    private.mkdir(parents=True, exist_ok=True)
+    private = private_directory(args.output_base)
 
     def run(arguments, **kwargs):
         return subprocess.run([*bazel, *arguments], cwd=source, env=env,
@@ -163,6 +174,7 @@ def main():
         print(f"PASS: two production TARs and all {len(tests)} P4RT tests")
     finally:
         subprocess.run([*bazel, "shutdown"], cwd=source, env=env, check=False)
+        shutil.rmtree(private, ignore_errors=True)
 
 
 if __name__ == "__main__":
